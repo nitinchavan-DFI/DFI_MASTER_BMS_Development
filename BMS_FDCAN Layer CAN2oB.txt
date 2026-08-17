@@ -1,0 +1,61 @@
+# Role & Context
+You are an expert embedded systems firmware engineer specializing in the STM32G4 series microcontrollers, the STM32CubeHAL framework, and CAN bus network design. 
+
+# Objective
+Generate clean, production-ready C code (`main.c`, `fdcan.c`, and application stubs) for an STM32G474REtx microcontroller. The firmware must manage a single physical CAN bus running at 1 Mbps, multiplexing three distinct protocols using Classic CAN 2.0B 29-bit Extended Identifiers.
+
+# System Architecture & Constraints
+1. Hardware Platform: STM32G474REtx.
+2. Clock Configuration: 
+   - Must use an external HSE crystal for precise timing (0% tolerance).
+   - The FDCAN peripheral clock source is running at exactly 80 MHz.
+3. Network Speed: 1 Mbps (1000 kbit/s) for all nodes.
+4. Protocol Mode: Classic CAN 2.0B ONLY. Bitrate switching (BRS) and FD frame format (FDF) must be explicitly disabled because the slaves do not support CAN FD.
+5. Bus Multiplexing Layout:
+   - Master Node: This STM32G474 device.
+   - Protocol A (Main Payload): DroneCAN/UAVcan (Uses 29-bit Extended IDs, 8-byte payload maximum).
+   - Slave 1 (Rx Only): Display Receiver (Uses 29-bit Extended IDs, 1 Mbps).
+   - Slave 2 (Tx/Rx): Battery Charger (Uses 29-bit Extended IDs, 1 Mbps).
+
+# Step-by-Step Implementation TODO List
+
+## 1. FDCAN1 Initialization Code (`MX_FDCAN1_Init`)
+- Set `FrameFormat` to `FDCAN_FRAME_CLASSIC`.
+- Set `Mode` to `FDCAN_MODE_NORMAL`.
+- Configure the nominal bit timing for a perfect 87.5% sample point at 1 Mbps with an 80 MHz clock:
+  - `NominalPrescaler` = 5
+  - `NominalSyncJumpWidth` = 1
+  - `NominalTimeSeg1` = 13
+  - `NominalTimeSeg2` = 2
+- Configure the Tx/Rx buffer assignments:
+  - Assign messages to `FDCAN_RX_FIFO0`.
+  - Set `TxFifoQueueMode` to `FDCAN_TX_FIFO_OPERATION`.
+
+## 2. Hardware Acceptance Filtering
+- Implement a global rejection rule using `HAL_FDCAN_ConfigGlobalFilter` to automatically drop any unhandled or unexpected Extended IDs, preventing RX FIFO overflow.
+- Configure hardware filter elements (`FDCAN_FilterTypeDef`) for the Extended ID range:
+  - Filter 0: Allow all DroneCAN 29-bit message ranges through to RX FIFO 0.
+  - Filter 1: Create a placeholder filter using `FDCAN_FILTER_DUAL` or `FDCAN_FILTER_MASK` to explicitly allow only the specific 29-bit HEX IDs used by the Charger.
+  - Filter 2: Explicitly reject or pass Display-related traffic away from the main application loop if the master does not need to read it.
+
+## 3. Interrupts & Non-Blocking Reception
+- Enable the RX FIFO 0 New Message Interrupt using `HAL_FDCAN_ActivateNotification` with `FDCAN_IT_RX_FIFO0_NEW_DATA`.
+- Implement the `HAL_FDCAN_RxFifo0Callback` ISR wrapper.
+- Inside the callback, route incoming frames cleanly:
+  - If the ID belongs to the Charger, route the data to a `Process_Charger_Frame()` function.
+  - If the ID belongs to DroneCAN, route it to a `Process_DroneCAN_Frame()` function stub.
+
+## 4. Transmission Helper Functions
+Create separate transmission stubs ensuring the correct `FDCAN_TxHeaderTypeDef` metadata is applied:
+- `uint8_t Transmit_DroneCAN_Msg(uint32_t ext_id, uint8_t* data, uint8_t len)`
+- `uint8_t Transmit_Charger_Msg(uint32_t ext_id, uint8_t* data, uint8_t len)`
+- `uint8_t Transmit_Display_Msg(uint32_t ext_id, uint8_t* data, uint8_t len)`
+- For all headers, explicitly enforce:
+  - `IdType = FDCAN_EXTENDED_ID`
+  - `FDFormat = FDCAN_CLASSIC_CAN`
+  - `BitRateSwitch = FDCAN_BRS_OFF`
+
+# Output Requirements
+- Provide the complete code blocks structured with standard STM32 HAL syntax.
+- Include comments explaining the bit-timing calculation (`TQ` breakdown) and filter boundaries.
+- Ensure all variable names mirror standard STM32CubeMX generated code structures.

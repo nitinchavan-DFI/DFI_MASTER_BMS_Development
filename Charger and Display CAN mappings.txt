@@ -1,0 +1,72 @@
+════════════════════════════════════════════════════════════════════════════
+DFI BMS MASTER GUI — CAN PACKET MAP  (bms_master_gui_charging_display v1.4)
+Bus: PEAK PCAN-USB @ 500 kbps  |  All IDs Extended (29-bit)
+════════════════════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────────────────────
+ SLAVE 1 : DISPLAY — BMS transmits, every <interval> ms
+────────────────────────────────────────────────────────────────────────────
+
+  ID 0x1FF820  BMS_VIT                                         [8 bytes]
+    Byte  Field           Type   Scale     Notes
+    0-1   pack_voltage    u16 LE  x0.001 V
+    2-3   pack_current    s16 LE  x0.01 A
+    4-5   temp1 (NTC1)    s16 LE  x0.01 degC
+    6-7   temp2 (NTC2)    s16 LE  x0.01 degC
+
+  ID 0x1FF810  BMS_OvrView                                     [8 bytes]
+    Byte  Field           Type   Scale     Notes
+    0     soc             u8      1%        0-100
+    1     soh             u8      1%        0-100
+    2-3   cycle_count     u16 LE  1
+    4-5   remaining_cap   u16 LE  x0.001 Ah
+    6     charging_status u8      -         0=idle 1=charging 2=fault 3=full
+    7     charging_cmd    u8      -         0=stop  1=charge  (operator cmd)
+
+  ID 0x1FF710  Cell_DeltaV                                     [6 bytes]
+    Byte  Field           Type   Scale     Notes
+    0-1   delta_v         u16 LE  x0.001 V
+    2-3   min_cell_v      u16 LE  x0.001 V
+    4-5   max_cell_v      u16 LE  x0.001 V
+
+────────────────────────────────────────────────────────────────────────────
+ SLAVE 2 : SOLTERRA CHARGER
+────────────────────────────────────────────────────────────────────────────
+
+  ID 0x1806E5F4  BMS -> Charger  (Charge command)  TX every 1 s   [8 bytes]
+    Byte  Field           Type   Scale     Notes
+    0-1   V_setpoint      u16 BE  x0.1 V    (v_raw = V*10, big-endian: [MSB,LSB])
+    2-3   I_setpoint      u16 BE  x0.1 A    (i_raw = I*10, big-endian: [MSB,LSB])
+    4     ctrl            u8      -         0x00=START(enabled) 0x01=STOP
+    5-7   reserved        --      -         0x00 0x00 0x00
+
+    Auto-stop/timeout frame (sent once on 5s comm timeout):
+      [Vhi, Vlo, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00]   (I forced to 0, ctrl=STOP)
+
+  ID 0x18FF50E5  Charger -> BMS  (Broadcast status)   RX, dlc >= 5  [>=5 bytes]
+    Byte  Field           Type   Scale     Notes
+    0-1   actual_V        u16 BE  x0.1 V
+    2-3   actual_I        u16 BE  x0.1 A
+    4     flags           u8      -         bitmask, see below
+
+    flags bitmask:
+      bit0 (0x01)  HW Fail
+      bit1 (0x02)  Over Temp
+      bit2 (0x04)  Input Err
+      bit3 (0x08)  INHIBIT
+      bit4 (0x10)  Comm Err
+    Fault group = bit0|bit1|bit2 (0x07) -> forces state = FAULT
+
+────────────────────────────────────────────────────────────────────────────
+ CHARGER STATE MACHINE (derived, not on the wire)
+────────────────────────────────────────────────────────────────────────────
+  DISCONNECTED -> READY -> CHARGING -> (FAULT | INHIBITED | TIMEOUT)
+
+  eval order:
+    flags & 0x07        -> FAULT
+    elif flags & 0x08   -> INHIBITED
+    elif V>0 and I>0    -> CHARGING
+    else                -> READY
+  TIMEOUT: no RX broadcast for > 5.0 s (COMM_TIMEOUT_S)
+
+════════════════════════════════════════════════════════════════════════════
